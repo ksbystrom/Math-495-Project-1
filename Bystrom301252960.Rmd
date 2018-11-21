@@ -1,0 +1,197 @@
+---
+title: "Math 495 Project 1"
+author: "Kristen Bystrom"
+date: "November 11, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(GGally)
+library(corrplot)
+library(tidyr)
+library(caret)
+library(randomForest)
+library(reshape)
+```
+
+
+##Data
+The dataset I’ve provided describes contains data on personality and on the use of various substances and illegal drugs. There is also gender, age, country, ethnicity and education. I have already converted it to R format.
+
+```{r}
+load("druguse.Rdata")
+```
+
+## Question 1
+
+Perform exploratory data analysis. Create visualisations that illustrate the relationship between substance use and the predictor variables.
+
+```{r}
+#Create pairwise comparisons for the continuous variables colored by UseLevel
+library(GGally)
+ggpairs(druguse[,c(6:11, 34)], aes(colour = UseLevel, alpha = 0.03), progress = FALSE,
+        lower = list(
+          combo = wrap("facethist", binwidth = 0.5))
+  )
+```
+
+```{r}
+#Create a correlation matrix and leave blank if the correlation coefficient is not significant
+library(corrplot)
+res1 <- cor.mtest(druguse[,6:30], conf.level = .95)
+corrplot(cor(druguse[,6:30]), method = "circle", p.mat = res1$p, insig = "blank")
+```
+
+
+```{r}
+library(tidyr)
+#Check the histogram of all predictors, drugs, and response variables
+druguse[, c(3,6:31, 33)] %>%
+gather() %>% 
+ggplot(aes(value)) +
+    facet_wrap(~ key, scales = "free") +
+    geom_histogram(bins = 25) +
+  ggtitle("Histograms of the Drug Use Data")
+```
+
+## Question 2
+### 2.1
+Build a classifier that predicts whether an individual’s substance use level will be “high” or “low” based only on the person’s background (age, gender, education, etc) and on the personality measurements.Use only the first 1500 rows to train the model.
+
+
+```{r}
+#Make agegroup an ordered factor (factor may not be quite ordered, but this seems like not that unreasonable of an assumption)
+druguse$agegroup = factor(druguse$agegroup, ordered = TRUE, levels = c("18-24", "25-34", "35-44", "45-54", "55-64", "65+"))
+
+#create test and training data
+trainData = druguse[1:1500,]
+testData = druguse[1501:1885,]
+
+#build model
+model <- glm(UseLevel ~ agegroup + gender + education + country + ethnicity + neuroticism + extraversion + opentoexperience + agreeableness+ conscientiousness+ impulsiveness+ sensation+caffeine+chocolate+nicotine+alcohol,family=binomial(link='logit'),data=trainData)
+
+#see model details
+summary(model)
+
+#test if model is "better than nothing"
+#anova(model, test = "Chisq")
+
+```
+
+### 2.2
+Make predictions on the remaining rows, 1501:1885 and create a table (or confusion matrix) to compare the predictions to the truth. What is the accuracy?
+
+```{r}
+testX = testData[,1:16]
+testY = testData[,34]
+
+fitted.results <- predict(model,newdata=testX,type='response')
+fitted.results <- factor(ifelse(fitted.results > 0.5,"high","low"), levels = c("low", "high"))
+
+confusionMatrix(data = fitted.results, reference = testY)
+```
+
+The expected accuracy on new data is 85.19%.
+
+## Question 3
+
+### 3.1
+
+Use another method or combination of methods to solve the same problem (namely: predict the UseLevel based on some or all of the predictors in the first 16 columns). If you like, you can make a copy of the data frame in which you convert the non-numerical columns to numerical columns. (Some of the methods we used in the course don’t work for factors or character predictors, like knn).
+
+```{r}
+#build model
+model2 <- randomForest(UseLevel ~ agegroup + gender + education + country + ethnicity + neuroticism + extraversion + opentoexperience + agreeableness+ conscientiousness+ impulsiveness+ sensation+caffeine+chocolate+nicotine+alcohol,data=trainData)
+
+#see model details
+summary(model2)
+```
+
+
+### 3.2
+
+Estimate how well you would expect your method to perform on new test data.
+
+```{r}
+#Compute Accuracy by making predictions on test data
+fitted.results2 <- predict(model2,newdata=testX,type='response')
+confusionMatrix(data = fitted.results2, reference = testY)
+```
+The expected accuracy on new test data is 84.70%.
+
+## Question 4
+
+### 4.1
+Create a variable that is “yes” or “no”, representing whether the patient reports that they ever used heroin. Use a random forest to predict whether someone has ever used heroin. For predictors, use the first 16 columns (as before), and now also the other illicit drugs. Think about whether you should use the any, UseLevel or  severity columns as predictors.
+
+I did not use any, UseLevel or  severity columns, as predictors because my understanding is that they were feature engineered by using the heroin column so there would be an artificially high correlation between those predictors and the heroin indicator. 
+```{r}
+druguse$horoinIndicator = factor(ifelse(druguse$heroin >0, "yes", "no"), levels = c("no", "yes"))
+#create test and training data
+trainData3 = druguse[1:1500,]
+testData3 = druguse[1501:1885,]
+
+#build model
+model3 <- randomForest(horoinIndicator ~ agegroup + gender + education + country + ethnicity + neuroticism + extraversion + opentoexperience + agreeableness+ conscientiousness+ impulsiveness+ sensation+caffeine+chocolate+nicotine+alcohol+amphetamine+ amylnitrite+benzodiaz+cannabis +cocaine+crack+ecstasy+ketamine+legalhighs+LSD+methadone+mushrooms+volatiles+semeron,data=trainData3)
+
+#see model details
+summary(model3)
+
+#Compute Accuracy by making predictions on test data
+testX = testData3[,c(1:23: 25:31)]
+testY = testData3[,35]
+fitted.results2 <- predict(model3,newdata=testX,type='response')
+confusionMatrix(data = fitted.results2, reference = testY)
+
+```
+
+# 4.2
+
+Based on your interests and your EDA, find another classification, regression or feature selection question that you can ask with this dataset. For example, you could see whether you can predict reported use other drugs. You could create new outcomes like whether someone uses both crack and cocaine, or either crack or cocaine. You could try to predict the level of alcohol consumption based on the personality measurements. There are many interesting options.
+
+Build an appropriate machine learning model to perform this task.
+
+```{r}
+#I am choosing to check if cannabis use alone predicts other illegal sibstances
+#I am setting up a linear regression to predict each other substance and comparing the results
+
+illegalList = colnames(druguse[,c(17:19, 21:30)])
+  
+#create test and training data
+trainData4 = druguse[1:1500,]
+testData4 = druguse[1501:1885,]
+
+#build 13 models, one for each illegal drug
+models.list = list()
+for(i in 1:length(illegalList)){
+  models.list[[illegalList[i]]] = glm(paste("cannabis~", illegalList[i]), data = trainData4)
+}
+
+```
+
+Why did you choose the method you did? How does it perform? Show the results with a table or plot and an estimate of the loss.
+
+I chose Linear Regression because the question I am answering "Which illegal substances used can be predicted by cannabis use" is already complicated because I have to create several models so I wanted to pick a model that is simple to explain and convey to the target audience. Because linear regression is commonly taught as part of other science courses, it is one of the best known models to non-statisticians. 
+In addition, it is not unrealistic to make the assumption that the numerical scale for usage of drugs might have a linear relationship, even though they represent non-scalar time periods. 
+```{r}
+#Compute Accuracy by making predictions on test data for each model in a loop
+testX = testData4[,20]
+fitted.results.list = list()
+MSPE = list()
+
+for(i in illegalList){
+  #get predictions
+  fitted.results.list[[i]] <- models.list[[i]]$coefficients[1] + testX*models.list[[i]]$coefficients[2]
+  
+  #Calculate Mean Squared Prediction Error
+  MSPE[[i]] <- mean((testData[,i] - fitted.results.list[[i]]) ^ 2)
+}
+
+#Visualize MSPE for predicting each drug based only on cannabis
+barplot(melt(data.frame(MSPE))$value, names.arg = melt(data.frame(MSPE))$variable, main = "Mean Square Prediction Error, Illegal Drug Use ~ Cannabis Use", ylab = "MSPE", las = 2)
+```
+
+Based on my above plot, cannabis use is better at predicting (has a lower mean square prediction error) Benzodiaz , Methamphetamine, Legal Highs, Ecstasy, and Cocaine use. Cannabis use is worse at predicting (has a higher mean square prediction error) Volatiles, Crack, Ketamine, and Heroin use. 
+
+I did not do a test to determine if these differences were statistically significant, however the above plot does tell the beginning of the story and provide justification for further research.
